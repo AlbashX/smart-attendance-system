@@ -803,6 +803,93 @@ app.include_router(build_router(lambda: store, settings))
 
 # ── Static frontend ───────────────────────────────────────────
 
+# TEMPORARY PROTOTYPE DATA IMPORT ENDPOINT
+@app.post("/api/admin/import-prototype")
+async def import_prototype(request: Request):
+    import hmac
+    import os
+
+    expected_token = os.environ.get("PROTOTYPE_IMPORT_TOKEN")
+    supplied_token = request.headers.get("authorization", "")
+
+    if not expected_token:
+        return JSONResponse({"detail": "Import disabled"}, status_code=404)
+
+    if not hmac.compare_digest(supplied_token, "Bearer " + expected_token):
+        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({"detail": "Invalid JSON"}, status_code=400)
+
+    students = payload.get("students")
+    timetable = payload.get("timetable_rules")
+
+    if not isinstance(students, list) or not isinstance(timetable, list):
+        return JSONResponse({"detail": "Invalid export structure"}, status_code=400)
+
+    if len(students) != 63 or len(timetable) != 29:
+        return JSONResponse({"detail": "Unexpected record counts"}, status_code=400)
+
+    enrolled = [
+        s for s in students
+        if s.get("samples") and s.get("centroid")
+    ]
+    if len(enrolled) != 4:
+        return JSONResponse({"detail": "Expected 4 enrolled students"}, status_code=400)
+
+    db = store.connect()
+    try:
+        student_count = db.execute("SELECT COUNT(*) FROM students").fetchone()[0]
+        timetable_count = db.execute("SELECT COUNT(*) FROM timetable_rules").fetchone()[0]
+
+        if student_count or timetable_count:
+            return JSONResponse({
+                "detail": "Destination tables are not empty",
+                "students": student_count,
+                "timetable_rules": timetable_count
+            }, status_code=409)
+
+        with db:
+            for s in students:
+                db.execute(
+                    "INSERT INTO students "
+                    "(id, roll_no, name, email, section, batch, photo_path, "
+                    "consent_at, samples, centroid) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        s["id"], s["roll_no"], s["name"], s.get("email"),
+                        s.get("section") or "D", s.get("batch"),
+                        s.get("photo_path"), s.get("consent_at"),
+                        s.get("samples"), s.get("centroid")
+                    )
+                )
+
+            for t in timetable:
+                db.execute(
+                    "INSERT INTO timetable_rules "
+                    "(id, weekday, start_time, end_time, course_name, "
+                    "course_code, teacher, room, batch, is_lab) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        t["id"], t["weekday"], t["start_time"],
+                        t["end_time"], t["course_name"],
+                        t.get("course_code"), t.get("teacher"),
+                        t.get("room"), t.get("batch"),
+                        int(t.get("is_lab") or 0)
+                    )
+                )
+
+        return {
+            "ok": True,
+            "students_imported": len(students),
+            "timetable_rules_imported": len(timetable),
+            "enrolled_students": len(enrolled)
+        }
+    finally:
+        db.close()
+
 dist = ROOT / 'frontend/dist'
 if dist.exists():
     app.mount('/', StaticFiles(directory=dist, html=True), name='frontend')

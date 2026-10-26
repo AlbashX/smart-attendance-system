@@ -28,3 +28,6 @@ details/
 *.jpg
 *.jpeg
 output/
+
+# Private prototype migration data
+migration_backup/
