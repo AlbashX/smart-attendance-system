@@ -44,7 +44,7 @@ def _allow_local_host(host_header: str) -> bool:
         '127.0.0.1',
         '::1',
         'testserver',
-        '://onrender.com',
+        'smart-attendance-system-kk8h.onrender.com',
     }
     
     # Indent all lines below by 4 spaces (or 1 tab) so they line up with 'hostname' above
