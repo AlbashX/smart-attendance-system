@@ -1,5 +1,6 @@
 import csv
 import io
+import ipaddress
 import json
 import os
 import sqlite3
@@ -13,7 +14,6 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import Response, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from pydantic import BaseModel, Field
 from .core import normalize, match, Stability, calibrate, verification_metrics
 from .store import Store, now
@@ -23,12 +23,35 @@ ROOT = Path(__file__).resolve().parents[1]
 store = Store(os.environ.get('ATTEND_DB', str(ROOT / 'data/attendance.db')))
 engine = FaceEngine()
 app = FastAPI(title='Attend — Classroom Attendance API', version='0.2.0')
-app.add_middleware(TrustedHostMiddleware,
-                   allowed_hosts=['localhost', '127.0.0.1', 'testserver'])
 # One process/worker: session stability and ephemeral enrollment tokens are in memory.
 lock = threading.RLock()
 pending = {}
 stability = {}
+
+
+def _local_hostname(host_header: str) -> str:
+    host = (host_header or '').strip()
+    if host.startswith('['):
+        end = host.find(']')
+        return host[1:end] if end != -1 else host
+    return host.split(':')[0]
+
+
+def _allow_local_host(host_header: str) -> bool:
+    hostname = _local_hostname(host_header).lower()
+    if hostname in {'localhost', '127.0.0.1', '::1', 'testserver'} or hostname.endswith('.local'):
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_private
+    except ValueError:
+        return False
+
+
+@app.middleware('http')
+async def require_local_host(request: Request, call_next):
+    if not _allow_local_host(request.headers.get('host', '')):
+        return JSONResponse({'detail': 'Host not allowed'}, status_code=400)
+    return await call_next(request)
 
 DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
@@ -37,8 +60,7 @@ DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 async def local_only(request: Request, call_next):
     origin = request.headers.get('origin')
     if origin and origin != str(request.base_url).rstrip('/'):
-        return JSONResponse({'detail': 'Cross-origin access is disabled'},
-                            status_code=403)
+        return JSONResponse({'detail': 'Cross-origin access is disabled'}, status_code=403)
     if int(request.headers.get('content-length', '0')) > 10_000_000:
         return JSONResponse({'detail': 'Request too large'}, status_code=413)
     response = await call_next(request)
@@ -165,6 +187,63 @@ def get_next_class():
     return None
 
 
+def compute_dl_metrics():
+    cfg = settings()
+    threshold = float(cfg['threshold'])
+    margin = float(cfg['margin'])
+    students = [s for s in store.students(True) if s.get('centroid')]
+    stats = {}
+    n = len(students)
+    if n > 0:
+        centroids = np.array([s['centroid'] for s in students], dtype=np.float32)
+        sim_matrix = np.clip(centroids @ centroids.T, -1.0, 1.0)
+        impostor_scores = []
+        for i, s in enumerate(students):
+            other_scores = [float(sim_matrix[i, j]) for j in range(n) if j != i]
+            max_imp = max(other_scores) if other_scores else 0.0
+            avg_imp = float(np.mean(other_scores)) if other_scores else 0.0
+            impostor_scores.extend(other_scores)
+            stats[s['id']] = {
+                'max_impostor': round(max_imp, 4),
+                'avg_impostor': round(avg_imp, 4),
+                'margin_to_threshold': round(threshold - max_imp, 4),
+                'validation_pass': bool(max_imp < threshold),
+                'self_similarity': 1.0,
+                'sample_count': s.get('sample_count', 0),
+            }
+        max_imp_overall = max(impostor_scores) if impostor_scores else 0.0
+        avg_imp_overall = float(np.mean(impostor_scores)) if impostor_scores else 0.0
+        far = float(np.mean([s >= threshold for s in impostor_scores])) if impostor_scores else 0.0
+        acc = float(np.mean([s < threshold for s in impostor_scores])) if impostor_scores else 1.0
+    else:
+        max_imp_overall = 0.0
+        avg_imp_overall = 0.0
+        far = 0.0
+        acc = 1.0
+
+    eval_data = store.probes()
+    val_rows = [r for r in eval_data if r['split'] == 'validation']
+    test_rows = [r for r in eval_data if r['split'] == 'test']
+
+    return {
+        'model_detector': 'YuNet 2023mar (ONNX)',
+        'model_recognizer': 'SFace 2021dec (128-d L2)',
+        'embedding_dims': 128,
+        'distance_metric': 'Cosine Similarity',
+        'threshold': threshold,
+        'margin': margin,
+        'calibrated': bool(cfg['calibrated']),
+        'total_enrolled': n,
+        'max_impostor_similarity': round(max_imp_overall, 4) if n > 1 else None,
+        'avg_impostor_similarity': round(avg_imp_overall, 4),
+        'gallery_separation_rate': round(acc, 4) if n > 1 else None,
+        'pairwise_far': round(far, 4),
+        'validation_attempts': len(val_rows),
+        'test_attempts': len(test_rows),
+        'student_metrics': stats,
+    }
+
+
 # ── State endpoint ────────────────────────────────────────────
 
 @app.get('/api/state')
@@ -194,6 +273,7 @@ def state():
         current_class=current_class,
         current_classes=current_classes,
         next_class=next_class,
+        dl_metrics=compute_dl_metrics(),
         today=datetime.now().strftime('%Y-%m-%d'),
         weekday=datetime.now().weekday(),
         day_name=DAY_NAMES[datetime.now().weekday()]
@@ -460,8 +540,9 @@ def recognize(body: Frame):
         key = (body.stream_id, body.session_id)
         if len(stability) > 100:
             stability.clear()
-        stable = stability.setdefault(
-            key, Stability()).observe(decision['identity'], time.monotonic())
+        stab_obj = stability.setdefault(key, Stability())
+        stable = stab_obj.observe(decision['identity'], time.monotonic())
+        stable_count = getattr(stab_obj, 'count', 0)
         marked = False
         if stable and body.session_id:
             marked = store.mark(
@@ -472,7 +553,11 @@ def recognize(body: Frame):
                      if s['id'] == decision['identity']), None)
         return {**result, **decision,
                 'stable': stable, 'marked': marked,
-                'name': name, 'roll_no': roll}
+                'name': name, 'roll_no': roll,
+                'stable_count': min(stable_count, 3),
+                'threshold': config['threshold'],
+                'margin': config['margin'],
+                'embedding_dim': 128 if embedding is not None else None}
 
 
 # ── Timetable endpoints ──────────────────────────────────────
@@ -697,6 +782,12 @@ def export_evaluation():
     return Response(json.dumps(report, indent=2), media_type='application/json',
                     headers={'Content-Disposition':
                              'attachment; filename="evaluation.json"'})
+
+
+# ── Deep Learning Metrics Dashboard ───────────────────────────
+
+from .lab import build_router
+app.include_router(build_router(lambda: store, settings))
 
 
 # ── Static frontend ───────────────────────────────────────────

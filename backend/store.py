@@ -76,6 +76,16 @@ class Store:
 
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
+            CREATE TABLE IF NOT EXISTS model_runs(
+                id TEXT PRIMARY KEY,
+                class_id TEXT NOT NULL,
+                student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                payload TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS model_run_scope ON model_runs(class_id, student_id, created_at);
+
             CREATE TABLE IF NOT EXISTS probes(
                 id TEXT PRIMARY KEY,
                 split TEXT,

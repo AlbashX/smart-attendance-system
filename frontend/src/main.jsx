@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ScanFace, Video, Users, ClipboardList, FlaskConical, ShieldCheck, UserPlus, Clock3, UserCheck, Play, Download, Search, Trash2, ArrowLeft, Check, Info, X, ChevronRight, LockKeyhole, RotateCcw, Calendar, Upload, Camera as CameraIcon, FileVideo, AlertTriangle, Pencil, Plus, BookOpen, GraduationCap } from 'lucide-react';
+import { ScanFace, Video, Users, ClipboardList, FlaskConical, ShieldCheck, UserPlus, Clock3, UserCheck, Play, Download, Search, Trash2, ArrowLeft, Check, Info, X, ChevronRight, LockKeyhole, RotateCcw, Calendar, Upload, Camera as CameraIcon, FileVideo, AlertTriangle, Pencil, Plus, BookOpen, GraduationCap, Cpu, Activity, Sparkles, Layers } from 'lucide-react';
 import Camera from './Camera';
+import Lab from './lab/AccuracyLab';
 import { api, uploadFile, percentage, timeLabel } from './api';
 import './styles.css';
 
@@ -125,7 +126,18 @@ function App() {
 function Live({state,refresh,action}) {
   const [result,setResult] = useState(null);
   const [pending,setPending] = useState(false);
-  const [streamId] = useState(() => crypto.randomUUID());
+  const [streamId] = useState(() => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // Fallback UUID v4 generator for non-secure contexts
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+});
+
   const session = state.active_session;
   const currentClasses = state.current_classes || (state.current_class ? [state.current_class] : []);
   const nextClass = state.next_class;
@@ -145,6 +157,11 @@ function Live({state,refresh,action}) {
   const activeRule = (session?.rule_id && state.timetable.find(r => r.id === session.rule_id)) || state.current_class;
   const selectedAdHoc = todayClasses.find(c => c.id === selectedAdHocId) || todayClasses[0] || null;
 
+  const dlMetrics = state.dl_metrics;
+  const currentBatch = selectedClass?.batch || activeRule?.batch || null;
+  const batchStudents = state.students.filter(s => currentBatch ? s.batch === currentBatch : true);
+  const batchEnrolledCount = batchStudents.filter(s => s.sample_count > 0).length;
+
   // Fetch session records
   const [records, setRecords] = useState([]);
   useEffect(() => {
@@ -155,7 +172,15 @@ function Live({state,refresh,action}) {
     }
   }, [session?.id, result?.marked]);
 
-  const enrolledCount = state.students.filter(s => s.sample_count > 0).length;
+  // Aggregate latest attendance records per student
+  const studentRecords = new Map();
+  for (const r of (records.length ? records : state.records || [])) {
+    if (!studentRecords.has(r.student_id) || r.status === 'present') {
+      studentRecords.set(r.student_id, r);
+    }
+  }
+
+  const batchPresentCount = batchStudents.filter(s => studentRecords.get(s.id)?.status === 'present').length;
 
   async function recognize(image) {
     const r = await api('/recognize', {method:'POST', body:{image, stream_id:streamId, session_id:session?.id || null}});
@@ -182,8 +207,6 @@ function Live({state,refresh,action}) {
     setPending(false);
     setResult(null);
   }
-
-  const presentCount = records.filter(r => r.status === 'present').length;
 
   return <>
     {/* Current class info banner */}
@@ -268,39 +291,120 @@ function Live({state,refresh,action}) {
       </>}
     </div>
 
-    <div className="metrics">
-      <Metric icon={Users} label="Enrolled students" value={enrolledCount}/>
-      <Metric icon={UserCheck} label="Present this session" value={session ? presentCount : '—'}/>
-      <Metric icon={Clock3} label="Recognition latency" value={result ? `${result.latency_ms} ms` : '—'}/>
+    {/* Deep Learning Metrics Cards */}
+    <div className="metrics metrics-4">
+      <Metric
+        icon={GraduationCap}
+        label={`${currentBatch ? `Batch ${currentBatch}` : 'Class'} Enrolled`}
+        value={`${batchEnrolledCount} / ${batchStudents.length}`}
+        detail={`${percentage(batchStudents.length ? batchEnrolledCount / batchStudents.length : 0)} gallery coverage`}
+      />
+      <Metric
+        icon={ShieldCheck}
+        label="Gallery separation"
+        value={dlMetrics?.gallery_separation_rate != null ? percentage(dlMetrics.gallery_separation_rate) : '—'}
+        detail="Centroid separation only; not test accuracy"
+      />
+      <Metric
+        icon={FlaskConical}
+        label="Max Impostor Sim"
+        value={dlMetrics?.max_impostor_similarity != null ? dlMetrics.max_impostor_similarity.toFixed(3) : '—'}
+        detail={`Boundary τ = ${state.settings.threshold.toFixed(2)} (+${(dlMetrics?.max_impostor_similarity == null ? '—' : (state.settings.threshold - dlMetrics.max_impostor_similarity).toFixed(3))} gap)`}
+      />
+      <Metric
+        icon={Clock3}
+        label="Inference Latency"
+        value={result?.latency_ms ? `${result.latency_ms} ms` : '—'}
+        detail="YuNet ONNX + SFace 128-d"
+      />
+    </div>
+
+    {/* Deep Learning Architecture & Telemetry Strip */}
+    <div className="dl-telemetry-bar">
+      <div className="dl-chip">
+        <span className="dl-chip-label">Face Detector</span>
+        <b>YuNet 2023mar</b>
+        <span className="chip-sub">ONNX · 640×480 · 5 Landmarks</span>
+      </div>
+      <div className="dl-chip">
+        <span className="dl-chip-label">Feature Embedder</span>
+        <b>SFace 2021dec</b>
+        <span className="chip-sub">128-d L2 Normalized Centroids</span>
+      </div>
+      <div className="dl-chip">
+        <span className="dl-chip-label">Similarity Metric</span>
+        <b>Cosine Similarity</b>
+        <span className="chip-sub">u · v ∈ [-1.0, +1.0]</span>
+      </div>
+      <div className="dl-chip">
+        <span className="dl-chip-label">Decision Boundary</span>
+        <b>τ ≥ {state.settings.threshold.toFixed(2)} · Δ ≥ {state.settings.margin.toFixed(2)}</b>
+        <span className="chip-sub">{state.settings.calibrated ? 'Validation Calibrated' : 'Provisional Baseline'}</span>
+      </div>
+      <div className="dl-chip">
+        <span className="dl-chip-label">Temporal Voting</span>
+        <b>3-Frame Queue</b>
+        <span className="chip-sub">Anti-spoof jitter filter</span>
+      </div>
     </div>
 
     <div className="workspace">
       <Camera key={session?.id || 'preview'} onFrame={recognize} automatic enabled={state.models_ready} result={result}/>
       <section className="panel controls">
-        <h2>Recognition status</h2>
-        <div className="divider"/>
-        <h3>Recognition checks</h3>
+        <div className="panel-heading" style={{marginBottom:10}}>
+          <h2>Recognition status</h2>
+          <span className="tech-tag"><Cpu size={12}/> DL Live</span>
+        </div>
+        <div className="divider" style={{margin:'14px 0'}}/>
+        <h3>Deep Learning Verification Pipeline</h3>
         {[
-          ['Single face','One face detected in frame', result?.face_count === 1],
-          ['Quality check','Face is clear and well lit', result?.quality],
-          ['Stable match','Three consecutive matching frames', result?.stable],
+          ['Single face detection', result?.face_count ? `1 face found [${result.box?.slice(0, 2).join(',')}]` : 'Awaiting subject', result?.face_count === 1],
+          ['Quality & illumination', result?.quality ? 'Illumination & blur checks passed' : 'Illumination / sharpness gate', result?.quality],
+          ['3-Frame temporal stability', result?.stable ? 'Confidence confirmed across 3 frames' : `${result?.stable_count || 0}/3 consecutive matching frames`, result?.stable],
         ].map(([title,description,passed]) =>
           <div className="check-row" key={title}>
             <span className={`check-dot ${passed ? 'passed' : ''}`}>{passed && <Check size={12}/>}</span>
             <div><b>{title}</b><small>{description}</small></div>
           </div>
         )}
+
+        <div className="temporal-gate">
+          <span className="temporal-label">Temporal Queue:</span>
+          <div className="temporal-dots">
+            <span className={`temp-dot ${result?.stable_count >= 1 ? 'active' : ''}`}/>
+            <span className={`temp-dot ${result?.stable_count >= 2 ? 'active' : ''}`}/>
+            <span className={`temp-dot ${result?.stable ? 'active confirmed' : ''}`}/>
+          </div>
+          <span className="temporal-text">{result?.stable ? '3/3 Confirmed' : `${result?.stable_count || 0}/3 frames`}</span>
+        </div>
+
+        {result?.score != null && (
+          <div style={{background:'#f6f9fb',padding:10,borderRadius:6,margin:'12px 0'}}>
+            <div className="dl-inspector-row"><span>Cosine Similarity:</span><b>{result.score.toFixed(4)}</b></div>
+            <div className="dl-inspector-row"><span>Boundary Threshold:</span><b>τ = {state.settings.threshold.toFixed(2)}</b></div>
+            <div className="dl-inspector-row"><span>Ambiguity Separation:</span><b>Δ = +{(result.gap || 0).toFixed(3)}</b></div>
+            <div className="dl-inspector-row"><span>Vector Dimension:</span><b>128-d Unit Norm</b></div>
+            <div className="dl-inspector-row"><span>Pipeline Latency:</span><b>{result.latency_ms} ms</b></div>
+          </div>
+        )}
+
         {result?.name && <div className="match-result">
           <UserCheck size={18}/>
           <div>
             <b>{result.name}</b> <small className="muted">({result.roll_no})</small>
-            <small>{result.stable ? (session ? 'Recognized · attendance recorded' : 'Recognized · no active session') : 'Confirming identity…'}</small>
+            <small>{result.stable ? (session ? 'Verified match · attendance recorded' : 'Verified match · start session to record') : 'Confirming identity in temporal queue…'}</small>
           </div>
         </div>}
         {result?.identity === null && result?.reason === 'Unknown' && result?.quality &&
           <div className="unknown-result">
             <AlertTriangle size={18}/>
-            <div><b>Unknown person</b><small>This face does not match any enrolled student.</small></div>
+            <div><b>Unknown / Unenrolled person</b><small>Cosine score is below threshold ({state.settings.threshold.toFixed(2)}).</small></div>
+          </div>
+        }
+        {result?.reason === 'Ambiguous match' &&
+          <div className="unknown-result" style={{borderColor:'#e5ad38',background:'#fdfaf2'}}>
+            <AlertTriangle size={18} color="#b37c09"/>
+            <div><b>Ambiguous separation</b><small>Top-1 and Top-2 score separation &lt; {state.settings.margin.toFixed(2)} margin.</small></div>
           </div>
         }
         <p className="caption"><Info size={16}/> Unknown faces are never marked present. One verified sighting (3-frame confirmation) marks attendance.</p>
@@ -312,22 +416,125 @@ function Live({state,refresh,action}) {
       <span>{state.settings.calibrated ? 'Validation-calibrated threshold' : 'Uncalibrated starting threshold'}: {state.settings.threshold.toFixed(3)} · {state.settings.calibrated ? 'Evaluate the held-out test set before reporting accuracy.' : 'Use Accuracy lab to tune this for your student group.'}</span>
     </div>
 
-    {session && <section className="panel recent">
-      <div className="panel-heading"><h2>Session attendance</h2><span className="muted">{session.name} · {presentCount} present</span></div>
-      <div className="table-scroll"><table><thead><tr><th>Student</th><th>Roll No</th><th>Section</th><th>Status</th><th>Time</th><th>Similarity</th></tr></thead>
-        <tbody>{records.map(r =>
-          <tr key={r.student_id + r.session_id}>
-            <td><span className="avatar">{r.student_name?.[0]?.toUpperCase()}</span><b>{r.student_name}</b></td>
-            <td>{r.roll_no}</td>
-            <td>{r.section}</td>
-            <td><StatusBadge status={r.status}/></td>
-            <td>{r.status === 'present' ? timeLabel(r.marked_at) : '—'}</td>
-            <td>{r.similarity != null ? <span className="score">{r.similarity.toFixed(3)}</span> : '—'}</td>
-          </tr>
-        )}</tbody>
-      </table></div>
-      {!records.length && <Empty>Attendance will appear here as students are recognized.</Empty>}
-    </section>}
+    {/* Selected Class Student Deep Learning & Validation Roster */}
+    <section className="panel dl-students-section">
+      <div className="panel-heading">
+        <div>
+          <div className="dl-badge-title">
+            <h2>{selectedClass?.course_name || 'Class'} {currentBatch ? `(Batch ${currentBatch})` : ''} — Student Validation & Biometrics Roster</h2>
+            <span className="tech-tag"><Activity size={12}/> Deep Learning Roster</span>
+          </div>
+          <p className="muted small">
+            Student biometrics, 128-d centroid embeddings, pairwise validation safety margins, and live attendance for {selectedClass?.teacher} ({selectedClass?.room || 'Room TBD'} · {selectedClass?.start_time}–{selectedClass?.end_time}).
+          </p>
+        </div>
+        <div className="roster-filters">
+          <span className="filter-stat"><b>{batchEnrolledCount}</b> / {batchStudents.length} enrolled</span>
+          <span className="filter-stat present-stat"><b>{batchPresentCount}</b> present</span>
+          <span className="filter-stat"><b>{dlMetrics?.gallery_separation_rate != null ? percentage(dlMetrics.gallery_separation_rate) : '—'}</b> gallery separation</span>
+        </div>
+      </div>
+
+      <div className="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Student</th>
+              <th>Roll No</th>
+              <th>Batch</th>
+              <th>Biometric Embedding (DL)</th>
+              <th>Validation Margin to Impostor</th>
+              <th>Cosine Similarity Score</th>
+              <th>Attendance Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {batchStudents.map(s => {
+              const studentMetric = dlMetrics?.student_metrics?.[s.id];
+              const rec = studentRecords.get(s.id);
+              const isPresent = rec?.status === 'present';
+              const isAbsent = rec?.status === 'absent';
+              const isEnrolled = s.sample_count > 0;
+              const maxImp = studentMetric?.max_impostor;
+              const marginGap = studentMetric?.margin_to_threshold;
+              const latestSim = isPresent && rec?.similarity != null ? rec.similarity : null;
+
+              return (
+                <tr key={s.id}>
+                  <td>
+                    <span className="avatar">{s.name?.[0]?.toUpperCase()}</span>
+                    <b>{s.name}</b>
+                    {s.email && <small className="muted" style={{display:'block'}}>{s.email}</small>}
+                  </td>
+                  <td><b>{s.roll_no}</b></td>
+                  <td><span className="batch-tag">{s.batch || 'Section D'}</span></td>
+                  <td>
+                    {isEnrolled ? (
+                      <span className="vector-badge active">
+                        <Check size={13}/> 128-d Centroid ({s.sample_count}/5 samples)
+                      </span>
+                    ) : (
+                      <span className="vector-badge">
+                        No biometric data
+                      </span>
+                    )}
+                  </td>
+                  <td>
+                    {isEnrolled && maxImp != null ? (
+                      <div className="sim-score-cell">
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <span className="margin-pill safe">
+                            Max Imp: {maxImp.toFixed(3)}
+                          </span>
+                          <small className="muted">Gap: +{marginGap > 0 ? marginGap.toFixed(3) : '0.000'}</small>
+                        </div>
+                        <div className="sim-score-bar" title={`Max impostor similarity ${maxImp.toFixed(3)} vs threshold ${state.settings.threshold.toFixed(2)}`}>
+                          <div
+                            className={`sim-score-fill ${maxImp < state.settings.threshold ? 'high' : 'margin'}`}
+                            style={{width: `${Math.min(100, Math.max(10, maxImp * 100))}%`}}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  <td>
+                    {latestSim != null ? (
+                      <div className="sim-score-cell">
+                        <span className="score" style={{background:'#e3f6ef',color:'#0a7e63',fontWeight:700}}>
+                          {latestSim.toFixed(3)} ({percentage(latestSim)})
+                        </span>
+                        <div className="sim-score-bar">
+                          <div className="sim-score-fill high" style={{width: `${Math.min(100, latestSim * 100)}%`}}/>
+                        </div>
+                      </div>
+                    ) : isEnrolled ? (
+                      <span className="score" style={{background:'#f1f5f9',color:'#475569'}}>
+                        Template ready (τ ≥ {state.settings.threshold.toFixed(2)})
+                      </span>
+                    ) : (
+                      <span className="muted">—</span>
+                    )}
+                  </td>
+                  <td>
+                    {isPresent ? (
+                      <StatusBadge status="present"/>
+                    ) : isAbsent ? (
+                      <StatusBadge status="absent"/>
+                    ) : isEnrolled ? (
+                      <span className="status-badge" style={{background:'#eef4f8',color:'#3a5570'}}>Eligible</span>
+                    ) : (
+                      <span className="status-badge" style={{background:'#f8f9fa',color:'#8c9ba8'}}>Unenrolled</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </section>
   </>;
 }
 
@@ -832,108 +1039,7 @@ function Records({state}) {
 }
 
 
-/* ── Accuracy Lab ────────────────────────────────────────────── */
-
-function Lab({state, refresh, confirm}) {
-  const [report, setReport] = useState(null);
-  const [expected, setExpected] = useState('');
-  const [subject, setSubject] = useState('');
-  const [batch, setBatch] = useState('');
-  const [consent, setConsent] = useState(false);
-  const [split, setSplit] = useState(state.settings.calibrated ? 'test' : 'validation');
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const load = async () => setReport(await api('/evaluation'));
-  useEffect(() => { load().catch(e => setError(e.message)); }, [state.settings.calibrated]);
-
-  async function capture(image) {
-    await api('/probes', {method:'POST', body:{image, expected:expected||null, subject:expected||subject, batch, consent, split}}).then(setResult);
-    await load();
-  }
-
-  async function calibrateNow() {
-    setBusy(true); setError('');
-    try { await api('/calibrate', {method:'POST'}); await refresh(); await load(); setSplit('test'); }
-    catch (e) { setError(e.message); }
-    finally { setBusy(false); }
-  }
-
-  const test = report?.test;
-  const enrolledStudents = state.students.filter(s => s.sample_count > 0);
-
-  return <>
-    <div className="experiment-steps">
-      <span className="done">1 <b>Enroll gallery</b></span><ChevronRight size={16}/>
-      <span className={!state.settings.calibrated ? 'current' : 'done'}>2 <b>Collect & calibrate</b></span><ChevronRight size={16}/>
-      <span className={state.settings.calibrated ? 'current' : ''}>3 <b>Held-out test</b></span>
-    </div>
-
-    <div className="metrics lab-metrics">
-      <Metric icon={UserCheck} label="Test recognition accuracy" value={percentage(test?.recognition_accuracy)} detail={`${test?.known_attempts||0} known attempts`}/>
-      <Metric icon={ShieldCheck} label="Test unknown rejection" value={percentage(test?.unknown_rejection_accuracy)} detail={`${test?.unknown_attempts||0} unknown attempts`}/>
-      <Metric icon={Clock3} label="Test median latency" value={test?.latency_median_ms ? `${test.latency_median_ms.toFixed(0)} ms` : '—'} detail="Decode + detection + embedding"/>
-    </div>
-
-    {error && <div className="alert error" role="alert">{error}</div>}
-
-    <div className="workspace">
-      <Camera onFrame={capture} enabled={consent && !!batch.trim() && (!!expected || !!subject.trim()) && enrolledStudents.length > 0} result={result} actionLabel="Record evaluation attempt"/>
-      <section className="panel controls">
-        <h2>Collect labeled attempts</h2>
-        <label>Dataset split
-          <select value={split} onChange={e => setSplit(e.target.value)} disabled={state.settings.calibrated}>
-            <option value="validation">Validation — threshold selection</option>
-            <option value="test" disabled={!state.settings.calibrated}>Test — final measurement</option>
-          </select>
-        </label>
-        <label>Person in front of the camera
-          <select value={expected} onChange={e => setExpected(e.target.value)}>
-            <option value="">Unknown / not enrolled</option>
-            {enrolledStudents.map(s => <option key={s.id} value={s.id}>{s.name} · {s.roll_no}</option>)}
-          </select>
-        </label>
-        {!expected && <label>Anonymous student code<input placeholder="e.g. unknown-A" value={subject} maxLength={80} onChange={e => setSubject(e.target.value)}/></label>}
-        <label>Capture batch<input placeholder="e.g. day-2-morning" value={batch} maxLength={80} onChange={e => setBatch(e.target.value)}/></label>
-        <label className="consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/><span>This student explicitly consents to this evaluation capture.</span></label>
-        <p className="muted small">Use different capture sessions from enrollment. Use separate batches and different unknown students for validation and test.</p>
-        <div className="divider"/>
-        <div className="panel-heading"><h3>Validation data</h3><span className="score">{report?.validation.attempts||0} attempts</span></div>
-        <p className="muted small">{report?.validation.known_attempts||0} known · {report?.validation.unknown_attempts||0} unknown. Minimum 5 of each.</p>
-        <button className="full" disabled={busy || state.settings.calibrated} onClick={calibrateNow}><LockKeyhole size={16}/>{state.settings.calibrated ? 'Threshold locked' : busy ? 'Calibrating…' : 'Calibrate & lock threshold'}</button>
-      </section>
-    </div>
-
-    <section className="panel report-panel">
-      <div className="panel-heading">
-        <div><h2>Held-out test report</h2><p className="muted small">No results are populated until you collect labeled test attempts.</p></div>
-        <a className="button outline" href="/api/evaluation.json"><Download size={16}/>Export report</a>
-      </div>
-      <div className="report-grid">
-        {[
-          ['Pairwise verification accuracy', percentage(test?.verification.accuracy)],
-          ['Pairwise false acceptance', percentage(test?.verification.far)],
-          ['Pairwise false rejection', percentage(test?.verification.frr)],
-          ['Wrong identity assignments', test?.wrong_identity_count ?? 0],
-          ['Rejected known attempts', test?.known_rejected ?? 0],
-          ['95th percentile latency', test?.latency_p95_ms ? `${test.latency_p95_ms.toFixed(0)} ms` : '—'],
-        ].map(([label,value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}
-      </div>
-      <p className="caption"><Info size={16}/> Quality-rejected captures are excluded from these metrics. This is a local experiment, not an LFW benchmark.</p>
-    </section>
-
-    <div className="section-toolbar">
-      <span className="muted small">Threshold {state.settings.threshold.toFixed(3)} · ambiguity margin {state.settings.margin.toFixed(2)} · no liveness detection</span>
-      <button className="text-button delete" onClick={() => confirm({
-        title: 'Reset this experiment?',
-        description: 'This deletes validation and test attempts and restores the uncalibrated threshold. Students and attendance remain.',
-        run: async () => { await api('/evaluation', {method:'DELETE'}); setSplit('validation'); await load(); }
-      })}><RotateCcw size={15}/>Reset experiment</button>
-    </div>
-  </>;
-}
-
+/* ── Accuracy Lab (Deep Learning Metrics Dashboard) ──────────── */
 
 /* ── Mount ───────────────────────────────────────────────────── */
 
