@@ -39,12 +39,23 @@ def _local_hostname(host_header: str) -> str:
 
 def _allow_local_host(host_header: str) -> bool:
     hostname = _local_hostname(host_header).lower()
-    if hostname in {'localhost', '127.0.0.1', '::1', 'testserver'} or hostname.endswith('.local'):
+    allowed_hosts = {
+        'localhost',
+        '127.0.0.1',
+        '::1',
+        'testserver',
+        '://onrender.com',
+    }
+    
+    # Indent all lines below by 4 spaces (or 1 tab) so they line up with 'hostname' above
+    if hostname in allowed_hosts or hostname.endswith('.local'):
         return True
+
     try:
         return ipaddress.ip_address(hostname).is_private
     except ValueError:
         return False
+
 
 
 @app.middleware('http')
