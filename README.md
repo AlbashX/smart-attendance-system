@@ -1,5 +1,7 @@
 # Attend — local face recognition attendance prototype
 
+Current deployment: source code is backed up in a private GitHub repository; the Python backend and database stay on your laptop. For password-protected HTTPS access from a phone on the same Wi-Fi, follow [Mobile access](docs/mobile-access.md) and run `start-mobile.ps1` alongside `start.ps1`. GitHub Pages cannot run this Python backend. The new live/spoof training work is a proposal: see [Training and evaluation plan](docs/dl-training-and-evaluation-plan.md). Older descriptions below predate the student/timetable update.
+
 A Deep Learning capstone application built with React, FastAPI, YuNet and SFace. Real pretrained ONNX inference, landmark alignment, cosine matching, consent-based enrollment, persistent attendance and a validation/test accuracy lab. No fabricated students or accuracy numbers.
 
 ## Start on Windows
