@@ -119,10 +119,10 @@ TIMETABLE = [
 ]
 
 
-def auto_seed(store: Store) -> None:
-    """Seed students and timetable if the database is empty.
+def auto_seed(store: Store, force: bool = False) -> dict:
+    """Seed students and timetable if either table is empty (or force=True).
 
-    Safe to call on every startup — it only inserts when both tables are empty,
+    Safe to call on every startup — it only inserts missing data,
     so it won't duplicate data if the database already has content.
     """
     with store.connect() as db:
@@ -130,32 +130,59 @@ def auto_seed(store: Store) -> None:
         timetable_count = db.execute(
             'SELECT COUNT(*) FROM timetable_rules').fetchone()[0]
 
-    if student_count > 0 or timetable_count > 0:
+    if not force and student_count > 0 and timetable_count > 0:
         log.info('Database already has data (%d students, %d rules) — '
                  'skipping auto-seed.', student_count, timetable_count)
-        return
-
-    log.info('Empty database detected — seeding %d students and %d '
-             'timetable rules …', len(STUDENTS), len(TIMETABLE))
+        return {
+            'seeded': False,
+            'total_students': student_count,
+            'total_timetable_rules': timetable_count,
+        }
 
     imported = 0
-    for s in STUDENTS:
-        try:
-            store.add_student(
-                roll_no=s['roll_no'],
-                name=s['name'],
-                email=s.get('email'),
-                section=s.get('section', 'D'),
-                batch=s.get('batch'),
-            )
-            imported += 1
-        except Exception as exc:
-            log.warning('Skipped %s: %s', s['roll_no'], exc)
+    if force or student_count == 0:
+        log.info('Seeding students …')
+        existing_rolls = set()
+        if student_count > 0:
+            with store.connect() as db:
+                existing_rolls = {r[0] for r in db.execute('SELECT roll_no FROM students').fetchall()}
+        for s in STUDENTS:
+            if s['roll_no'] in existing_rolls:
+                continue
+            try:
+                store.add_student(
+                    roll_no=s['roll_no'],
+                    name=s['name'],
+                    email=s.get('email'),
+                    section=s.get('section', 'D'),
+                    batch=s.get('batch'),
+                )
+                imported += 1
+            except Exception as exc:
+                log.warning('Skipped %s: %s', s['roll_no'], exc)
+        log.info('Auto-seed: %d students seeded.', imported)
 
     tt_count = 0
-    for rule in TIMETABLE:
-        store.add_timetable_rule(**rule)
-        tt_count += 1
+    if force or timetable_count == 0:
+        log.info('Seeding timetable rules …')
+        for rule in TIMETABLE:
+            try:
+                store.add_timetable_rule(**rule)
+                tt_count += 1
+            except Exception as exc:
+                log.warning('Skipped timetable rule: %s', exc)
+        log.info('Auto-seed: %d timetable rules seeded.', tt_count)
 
-    log.info('Auto-seed complete: %d students, %d timetable rules.',
-             imported, tt_count)
+    with store.connect() as db:
+        final_students = db.execute('SELECT COUNT(*) FROM students').fetchone()[0]
+        final_tt = db.execute('SELECT COUNT(*) FROM timetable_rules').fetchone()[0]
+
+    return {
+        'seeded': True,
+        'new_students': imported,
+        'new_timetable_rules': tt_count,
+        'total_students': final_students,
+        'total_timetable_rules': final_tt,
+    }
+
+

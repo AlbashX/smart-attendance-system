@@ -2,6 +2,7 @@ import csv
 import io
 import ipaddress
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -18,9 +19,16 @@ from pydantic import BaseModel, Field
 from .core import normalize, match, Stability, calibrate, verification_metrics
 from .store import Store, now
 from .vision import FaceEngine
+from .seed import auto_seed
+
+log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parents[1]
 store = Store(os.environ.get('ATTEND_DB', str(ROOT / 'data/attendance.db')))
+
+# ── Auto-seed on cold start (critical for Render's ephemeral filesystem) ──
+auto_seed(store)
+
 engine = FaceEngine()
 app = FastAPI(title='Attend — Classroom Attendance API', version='0.2.0')
 # One process/worker: session stability and ephemeral enrollment tokens are in memory.
@@ -47,8 +55,9 @@ def _allow_local_host(host_header: str) -> bool:
         'smart-attendance-system-kk8h.onrender.com',
     }
     
-    # Indent all lines below by 4 spaces (or 1 tab) so they line up with 'hostname' above
-    if hostname in allowed_hosts or hostname.endswith('.local'):
+    if (hostname in allowed_hosts or
+            hostname.endswith('.local') or
+            hostname.endswith('.onrender.com')):
         return True
 
     try:
@@ -70,8 +79,11 @@ DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 @app.middleware('http')
 async def local_only(request: Request, call_next):
     origin = request.headers.get('origin')
-    if origin and origin != str(request.base_url).rstrip('/'):
-        return JSONResponse({'detail': 'Cross-origin access is disabled'}, status_code=403)
+    if origin:
+        base = str(request.base_url).rstrip('/')
+        base_https = base.replace('http://', 'https://', 1)
+        if origin != base and origin != base_https:
+            return JSONResponse({'detail': 'Cross-origin access is disabled'}, status_code=403)
     if int(request.headers.get('content-length', '0')) > 10_000_000:
         return JSONResponse({'detail': 'Request too large'}, status_code=413)
     response = await call_next(request)
@@ -253,6 +265,47 @@ def compute_dl_metrics():
         'test_attempts': len(test_rows),
         'student_metrics': stats,
     }
+
+
+# ── Health / keep-alive endpoint ──────────────────────────────
+
+@app.get('/api/health')
+def health():
+    """Lightweight endpoint for keep-alive pings and uptime monitors."""
+    return {'status': 'ok'}
+
+
+@app.api_route('/api/seed', methods=['GET', 'POST'])
+def trigger_seed(force: bool = False):
+    """Trigger or re-verify database seeding."""
+    return auto_seed(store, force=force)
+
+
+# ── Keep-alive self-ping (prevents Render free-tier sleep) ────
+
+def _keep_alive() -> None:
+    """Background thread: pings our own /api/health every 8 minutes.
+
+    Render free-tier spins the service down after ~15 min of inactivity,
+    which shows a slow "waking up" loading screen. This prevents that.
+    """
+    import urllib.request
+    render_url = os.environ.get('RENDER_EXTERNAL_URL')  # set by Render
+    if not render_url:
+        return  # not on Render, nothing to do
+    ping_url = f"{render_url.rstrip('/')}/api/health"
+    log.info('Keep-alive enabled → pinging %s every 8 min', ping_url)
+    while True:
+        time.sleep(480)  # 8 minutes (well under the 15-minute sleep threshold)
+        try:
+            req = urllib.request.Request(ping_url, headers={'User-Agent': 'Attend-KeepAlive/1.0'})
+            urllib.request.urlopen(req, timeout=15)
+        except Exception as exc:
+            log.debug('Keep-alive ping: %s', exc)
+
+
+_keep_alive_thread = threading.Thread(target=_keep_alive, daemon=True)
+_keep_alive_thread.start()
 
 
 # ── State endpoint ────────────────────────────────────────────
