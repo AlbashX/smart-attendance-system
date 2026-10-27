@@ -290,10 +290,33 @@ class Store:
 
     def mark(self, student_id, session_id, score, method='face'):
         with self.connect() as db:
-            if not db.execute(
-                    'SELECT 1 FROM sessions WHERE id=? AND ended_at IS NULL',
-                    (session_id,)).fetchone():
+            session = db.execute(
+                'SELECT rule_id, name FROM sessions WHERE id=? AND ended_at IS NULL',
+                (session_id,)).fetchone()
+            if not session:
                 raise ValueError('Start an attendance session first')
+
+            # Enforce batch eligibility if session is restricted to a specific batch
+            target_batch = None
+            if session['rule_id']:
+                rule = db.execute(
+                    'SELECT batch FROM timetable_rules WHERE id=?',
+                    (session['rule_id'],)).fetchone()
+                if rule and rule['batch']:
+                    target_batch = rule['batch']
+            if not target_batch and session['name']:
+                for b in ('D1', 'D2', 'D3'):
+                    if f'({b})' in session['name'] or f'Batch {b}' in session['name']:
+                        target_batch = b
+                        break
+
+            if target_batch:
+                student = db.execute(
+                    'SELECT batch FROM students WHERE id=?', (student_id,)).fetchone()
+                if student and student['batch'] and student['batch'] != target_batch:
+                    # Student does not belong to this batch
+                    return False
+
             return bool(db.execute(
                 'INSERT OR IGNORE INTO attendance VALUES(?,?,?,?,?,?)',
                 (student_id, session_id, 'present', score, now(), method)

@@ -39,7 +39,7 @@ footer{margin-top:35px;padding:20px 0;border-top:1px solid #edf1f5;display:flex;
 /* Camera toolbar */
 .camera-toolbar{position:absolute;left:0;right:0;bottom:0;background:#152334e8;color:#d7e3ed;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:11px}.camera-toolbar-actions{display:flex;align-items:center;gap:6px}.camera-stop,.camera-flip{padding:7px 10px;background:#ffffff18;font-size:11px;color:#fff;border:none;border-radius:4px;cursor:pointer;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;transition:background .15s}.camera-stop:hover,.camera-flip:hover{background:#ffffff30}
 /* Face box */
-.face-box{position:absolute;border:2px solid #f7c65f;pointer-events:none}.face-box.matched{border-color:#20dfb2}.face-box span{position:absolute;top:-25px;left:-2px;background:#f7c65f;color:#10213a;padding:4px 7px;font-size:11px;white-space:nowrap}.face-box.matched span{background:#20dfb2}
+.face-box{position:absolute;border:2px solid #f7c65f;pointer-events:none}.face-box.matched{border-color:#20dfb2}.face-box.wrong-batch{border-color:#e53e3e}.face-box span{position:absolute;top:-25px;left:-2px;background:#f7c65f;color:#10213a;padding:4px 7px;font-size:11px;white-space:nowrap}.face-box.matched span{background:#20dfb2}.face-box.wrong-batch span{background:#e53e3e;color:#fff;font-weight:600}
 /* Session */
 .active-session{padding:13px;background:#eff8f6;border:1px solid #cce7df;border-radius:5px;margin:8px 0;font-size:13px;display:flex;gap:10px;align-items:center}.controls>small{display:block;margin-bottom:13px}
 /* Match result */
@@ -69,7 +69,7 @@ footer{margin-top:35px;padding:20px 0;border-top:1px solid #edf1f5;display:flex;
 /* ── Batch tag ─────────────────────────────────────────────── */
 .batch-tag{display:inline-block;padding:3px 8px;background:#f0f4f8;color:#455773;border-radius:4px;font-size:11px;font-weight:550}
 
-/* ── Current class banner ──────────────────────────────────── */
+/* ── Current class banner & Session Picker ──────────────────── */
 .current-class-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;background:#f0faf9;border:1px solid #cce7e0;border-radius:8px;margin-bottom:22px}.class-info{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.class-info strong{font-size:15px;color:#10213a}.class-detail{font-size:12px;color:#5a7080}
 .multi-class-info{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
 .class-header-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
@@ -83,6 +83,61 @@ footer{margin-top:35px;padding:20px 0;border-top:1px solid #edf1f5;display:flex;
 .pill-time{font-size:10px;opacity:.75;margin-left:2px}
 .adhoc-session-picker{display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .small-muted{font-size:11px;color:#6b8091;font-weight:500}
+
+/* Session Picker Enhancements */
+.session-picker-banner{display:flex;flex-direction:column;align-items:stretch;gap:14px;background:#f6fbfb;border:1px solid #bfe3dc;border-radius:10px;padding:18px 20px;margin-bottom:22px}
+.session-picker-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.picker-title-row{display:flex;align-items:flex-start;gap:12px}
+.picker-icon{width:36px;height:36px;border-radius:8px;background:#e0f4f0;color:#087f83;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.picker-heading{font-size:16px;font-weight:700;color:#10213a;margin:0 0 2px}
+.picker-sub{font-size:12px;color:#5a7080;margin:0}
+
+.session-filter-toolbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:10px 0;border-top:1px solid #e1f0ec;border-bottom:1px solid #e1f0ec}
+.filter-pill-group{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.filter-label{font-size:11px;font-weight:700;color:#6b8091;text-transform:uppercase;letter-spacing:.5px;margin-right:2px}
+.filter-tab-pill{padding:5px 12px;border-radius:16px;border:1px solid #c8e4de;background:#fff;color:#203e48;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
+.filter-tab-pill:hover{background:#edf7f4;border-color:var(--teal)}
+.filter-tab-pill.active{background:var(--teal);border-color:var(--teal);color:#fff}
+
+.day-selector-group{display:flex;align-items:center;gap:4px;flex-wrap:wrap}
+.day-pill{padding:4px 8px;border-radius:4px;border:1px solid #cce4de;background:#fff;color:#35535e;font-size:11px;font-weight:600;cursor:pointer}
+.day-pill.active{background:#0b565a;border-color:#0b565a;color:#fff}
+
+.batch-filter-pill{padding:4px 10px;border-radius:14px;border:1px solid #cce4de;background:#fff;color:#35535e;font-size:11px;font-weight:600;cursor:pointer}
+.batch-filter-pill.active{background:#234e52;border-color:#234e52;color:#fff}
+
+.session-dropdown-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:4px}
+.session-select-wrap{flex:1;min-width:280px;display:flex;flex-direction:column;gap:4px}
+.session-select-label{font-size:11px;font-weight:600;color:#506677}
+.session-select-input{width:100%;padding:10px 12px;border-radius:6px;border:1.5px solid #a8d5cc;background:#fff;color:#10213a;font-size:13px;font-weight:600;cursor:pointer}
+.session-select-input:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px rgba(8,127,131,.15)}
+
+.start-session-button{padding:10px 20px;background:var(--teal);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:650;cursor:pointer;display:inline-flex;align-items:center;gap:8px;white-space:nowrap;transition:all .15s}
+.start-session-button:hover{background:#06696d;box-shadow:0 3px 8px rgba(8,127,131,.25)}
+.start-session-button:disabled{opacity:.6;cursor:not-allowed}
+
+.selected-class-card{background:#fff;border:1px solid #cde6e0;border-radius:8px;padding:12px 16px;display:flex;flex-direction:column;gap:8px}
+.class-badge-and-name{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.class-type-tag{padding:2px 7px;border-radius:4px;font-size:10px;font-weight:700;letter-spacing:.5px}
+.lab-tag{background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd}
+.lecture-tag{background:#f3e8ff;color:#7e22ce;border:1px solid #e9d5ff}
+.class-title-text{font-size:15px;color:#0b1931;font-weight:700}
+.code-pill{font-size:11px;color:#5a6e85;background:#f1f5f9;padding:2px 6px;border-radius:4px;font-family:monospace}
+.batch-pill-highlight{background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700}
+.batch-pill-all{background:#e0f2fe;color:#075985;border:1px solid #bae6fd;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700}
+.now-badge{background:#dcfce7;color:#15803d;border:1px solid #bbf7d0;padding:2px 8px;border-radius:12px;font-size:10px;font-weight:700}
+.class-meta-details{display:flex;align-items:center;gap:18px;flex-wrap:wrap;font-size:12px;color:#51667a}
+.class-meta-details span b{color:#1a2b3c}
+
+/* Active session banner */
+.active-session-banner{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 20px;background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;margin-bottom:22px}
+.live-status-pill{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#166534;background:#dcfce7;padding:3px 10px;border-radius:12px;margin-bottom:4px}
+.session-title{font-size:18px;color:#0f172a;font-weight:700}
+.batch-pill-active{background:#fef3c7;color:#92400e;border:1px solid #fcd34d;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;margin-left:6px}
+.class-title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.session-stats-mini{font-size:12px;color:#15803d;margin-top:2px}
+.session-stats-mini b{font-weight:700}
+
 
 /* ── Deep Learning Telemetry & Roster ──────────────────────── */
 .dl-telemetry-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#0d1b2a;color:#e1ebf5;padding:13px 18px;border-radius:7px;margin-bottom:20px;box-shadow:0 2px 10px rgba(10,25,45,.12)}

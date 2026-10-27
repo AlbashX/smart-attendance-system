@@ -142,25 +142,43 @@ function Live({state,refresh,action}) {
   const currentClasses = state.current_classes || (state.current_class ? [state.current_class] : []);
   const nextClass = state.next_class;
 
-  const [selectedRuleId, setSelectedRuleId] = useState(() => currentClasses[0]?.id || '');
+  const [scheduleTab, setScheduleTab] = useState('today'); // 'today' or 'week'
+  const [selectedDay, setSelectedDay] = useState(() => (state.weekday < 6 ? state.weekday : 0));
+  const [batchFilter, setBatchFilter] = useState('ALL'); // 'ALL', 'D1', 'D2', 'D3'
+
   const todayClasses = (state.timetable || []).filter(r => r.weekday === state.weekday);
-  const [selectedAdHocId, setSelectedAdHocId] = useState(() => todayClasses[0]?.id || '');
+  const weekClasses = state.timetable || [];
+
+  const baseClasses = scheduleTab === 'today'
+    ? (todayClasses.length > 0 ? todayClasses : weekClasses)
+    : weekClasses.filter(r => r.weekday === selectedDay);
+
+  const displayedClasses = batchFilter === 'ALL'
+    ? baseClasses
+    : baseClasses.filter(c => !c.batch || c.batch === batchFilter);
+
+  const candidateClasses = displayedClasses.length > 0 ? displayedClasses : (weekClasses.length > 0 ? weekClasses : []);
+
+  const [selectedRuleId, setSelectedRuleId] = useState(() => currentClasses[0]?.id || todayClasses[0]?.id || (state.timetable || [])[0]?.id || '');
 
   // Keep selection valid when classes change
   useEffect(() => {
-    if (currentClasses.length > 0 && !currentClasses.some(c => c.id === selectedRuleId)) {
-      setSelectedRuleId(currentClasses[0].id);
+    if (selectedRuleId && !(state.timetable || []).some(c => c.id === selectedRuleId)) {
+      setSelectedRuleId(candidateClasses[0]?.id || '');
+    } else if (!selectedRuleId && candidateClasses.length > 0) {
+      setSelectedRuleId(candidateClasses[0].id);
     }
-  }, [currentClasses, selectedRuleId]);
+  }, [selectedRuleId, candidateClasses, state.timetable]);
 
-  const selectedClass = currentClasses.find(c => c.id === selectedRuleId) || currentClasses[0] || null;
-  const activeRule = (session?.rule_id && state.timetable.find(r => r.id === session.rule_id)) || state.current_class;
-  const selectedAdHoc = todayClasses.find(c => c.id === selectedAdHocId) || todayClasses[0] || null;
+  const selectedClass = (state.timetable || []).find(c => c.id === selectedRuleId) || candidateClasses[0] || null;
+  const activeRule = (session?.rule_id && (state.timetable || []).find(r => r.id === session.rule_id)) || state.current_class;
 
-  const dlMetrics = state.dl_metrics;
-  const currentBatch = selectedClass?.batch || activeRule?.batch || null;
+  const activeBatch = activeRule?.batch || (session?.name?.includes('(D1)') ? 'D1' : session?.name?.includes('(D2)') ? 'D2' : session?.name?.includes('(D3)') ? 'D3' : null);
+  const currentBatch = session ? activeBatch : (selectedClass?.batch || null);
   const batchStudents = state.students.filter(s => currentBatch ? s.batch === currentBatch : true);
   const batchEnrolledCount = batchStudents.filter(s => s.sample_count > 0).length;
+
+  const dlMetrics = state.dl_metrics;
 
   // Fetch session records
   const [records, setRecords] = useState([]);
@@ -209,87 +227,173 @@ function Live({state,refresh,action}) {
   }
 
   return <>
-    {/* Current class info banner */}
-    <div className="current-class-banner">
-      {session ? <>
+    {/* Session / Class Banner */}
+    {session ? (
+      <div className="active-session-banner">
         <div className="class-info">
-          <span className="live-dot"/><strong>{session.name}</strong>
-          {activeRule && <span className="class-detail">{activeRule.teacher} · {activeRule.start_time}–{activeRule.end_time} · {activeRule.room || 'Room TBD'}{activeRule.batch ? ` · Batch ${activeRule.batch}` : ' · Section D'}</span>}
-        </div>
-        <button className="outline danger-outline" disabled={pending} onClick={endSession}><X size={15}/>{pending ? 'Ending…' : 'End session'}</button>
-      </> : currentClasses.length > 0 ? <>
-        <div className="class-info multi-class-info">
-          <div className="class-header-row">
-            <Calendar size={18}/>
-            {currentClasses.length > 1 ? (
-              <span className="multi-label">Select ongoing lab / class:</span>
-            ) : (
-              <strong>{selectedClass?.course_name}</strong>
+          <div>
+            <div className="live-status-pill">
+              <span className="live-dot" /> LIVE ATTENDANCE IN PROGRESS
+            </div>
+            <div className="class-title-row">
+              <strong className="session-title">{session.name}</strong>
+              {activeBatch ? (
+                <span className="batch-pill-active">Batch {activeBatch} Only</span>
+              ) : (
+                <span className="batch-pill-all">Whole Section D</span>
+              )}
+            </div>
+            {activeRule && (
+              <span className="class-detail" style={{display:'block',marginTop:4}}>
+                {activeRule.teacher} · {activeRule.start_time}–{activeRule.end_time} · Room {activeRule.room || 'TBD'}
+              </span>
             )}
+            <div className="session-stats-mini">
+              <span>Attendance: <b>{batchPresentCount}</b> / {batchStudents.length} present ({percentage(batchStudents.length ? batchPresentCount / batchStudents.length : 0)})</span>
+            </div>
           </div>
-          {currentClasses.length > 1 && (
-            <div className="class-picker-pills" role="radiogroup" aria-label="Select ongoing lab or class">
-              {currentClasses.map(c => (
+        </div>
+        <div style={{display:'flex',gap:8}}>
+          <button className="outline danger-outline" disabled={pending} onClick={endSession}>
+            <X size={15}/> {pending ? 'Ending…' : 'End session'}
+          </button>
+        </div>
+      </div>
+    ) : (
+      <div className="session-picker-banner">
+        <div className="session-picker-header">
+          <div className="picker-title-row">
+            <div className="picker-icon"><Calendar size={20} /></div>
+            <div>
+              <h3 className="picker-heading">Select Session for Attendance</h3>
+              <p className="picker-sub">Choose any scheduled class or lab from the timetable below to begin recording attendance.</p>
+            </div>
+          </div>
+          {currentClasses.length > 0 && (
+            <span className="now-badge">
+              ● {currentClasses.length} Class{currentClasses.length > 1 ? 'es' : ''} in Session Now
+            </span>
+          )}
+        </div>
+
+        {/* Quick Filter Toolbar */}
+        <div className="session-filter-toolbar">
+          <div className="filter-pill-group">
+            <span className="filter-label">Day:</span>
+            <button
+              type="button"
+              className={`filter-tab-pill ${scheduleTab === 'today' ? 'active' : ''}`}
+              onClick={() => setScheduleTab('today')}
+            >
+              Today ({state.day_name || 'Today'})
+            </button>
+            <button
+              type="button"
+              className={`filter-tab-pill ${scheduleTab === 'week' ? 'active' : ''}`}
+              onClick={() => setScheduleTab('week')}
+            >
+              All Week
+            </button>
+          </div>
+
+          {scheduleTab === 'week' && (
+            <div className="day-selector-group">
+              {DAY_NAMES.map((name, idx) => (
                 <button
-                  key={c.id}
+                  key={name}
                   type="button"
-                  className={`class-pill ${selectedClass?.id === c.id ? 'active' : ''}`}
-                  onClick={() => setSelectedRuleId(c.id)}
-                  aria-checked={selectedClass?.id === c.id}
-                  role="radio"
+                  className={`day-pill ${selectedDay === idx ? 'active' : ''}`}
+                  onClick={() => setSelectedDay(idx)}
                 >
-                  <BookOpen size={14}/>
-                  <span>{c.course_name}</span>
-                  {c.batch && <span className="pill-batch">{c.batch}</span>}
+                  {name.slice(0, 3)}
                 </button>
               ))}
             </div>
           )}
-          {selectedClass && (
-            <span className="class-detail">
-              {selectedClass.teacher} · {selectedClass.start_time}–{selectedClass.end_time} · {selectedClass.room || 'Room TBD'}{selectedClass.batch ? ` · Batch ${selectedClass.batch}` : ' · Section D'}
-            </span>
-          )}
-        </div>
-        <button disabled={pending || !selectedClass} onClick={() => startSession(selectedClass)}>
-          <Play size={15}/>{pending ? 'Starting…' : `Start session${selectedClass?.batch ? ` (${selectedClass.batch})` : ''}`}
-        </button>
-      </> : <>
-        <div className="class-info multi-class-info">
-          <div className="class-header-row">
-            <Clock3 size={18}/>
-            <strong>No scheduled class right now</strong>
-            {nextClass && <span className="class-detail">Next: {nextClass.course_name} · {nextClass.start_time}–{nextClass.end_time}</span>}
-            {!nextClass && <span className="class-detail">No more classes today ({state.day_name})</span>}
+
+          <div className="filter-pill-group">
+            <span className="filter-label">Batch:</span>
+            {['ALL', 'D1', 'D2', 'D3'].map(b => (
+              <button
+                key={b}
+                type="button"
+                className={`batch-filter-pill ${batchFilter === b ? 'active' : ''}`}
+                onClick={() => setBatchFilter(b)}
+              >
+                {b === 'ALL' ? 'All Batches' : `Batch ${b}`}
+              </button>
+            ))}
           </div>
-          {todayClasses.length > 0 && (
-            <div className="adhoc-session-picker">
-              <span className="small-muted">Or select any session from today's schedule:</span>
-              <div className="class-picker-pills">
-                {todayClasses.map(c => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={`class-pill ${selectedAdHoc?.id === c.id ? 'active' : ''}`}
-                    onClick={() => setSelectedAdHocId(c.id)}
-                  >
-                    <BookOpen size={13}/>
-                    <span>{c.course_name}</span>
-                    {c.batch && <span className="pill-batch">{c.batch}</span>}
-                    <small className="pill-time">{c.start_time}</small>
-                  </button>
-                ))}
-              </div>
-            </div>
+        </div>
+
+        {/* Dropdown Selector & Start Button */}
+        <div className="session-dropdown-row">
+          <div className="session-select-wrap">
+            <label htmlFor="session-select" className="session-select-label">
+              Select timetable slot ({candidateClasses.length} options):
+            </label>
+            <select
+              id="session-select"
+              className="session-select-input"
+              value={selectedClass?.id || ''}
+              onChange={e => setSelectedRuleId(e.target.value)}
+            >
+              {candidateClasses.map(c => {
+                const isNow = currentClasses.some(curr => curr.id === c.id);
+                const dayPrefix = scheduleTab === 'week' ? `${DAY_NAMES[c.weekday].slice(0, 3)} ` : '';
+                return (
+                  <option key={c.id} value={c.id}>
+                    {isNow ? '🟢 [NOW] ' : ''}
+                    {dayPrefix}{c.start_time}–{c.end_time} · {c.course_name}
+                    {c.batch ? ` (Batch ${c.batch})` : ' (Whole Class)'}
+                    {c.room ? ` · ${c.room}` : ''}
+                    {c.teacher ? ` · ${c.teacher}` : ''}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          {selectedClass && (
+            <button
+              className="start-session-button"
+              disabled={pending || !selectedClass}
+              onClick={() => startSession(selectedClass)}
+            >
+              <Play size={16} />
+              {pending ? 'Starting…' : `Start Session (${selectedClass.batch ? `Batch ${selectedClass.batch}` : 'Section D'})`}
+            </button>
           )}
         </div>
-        {selectedAdHoc && (
-          <button disabled={pending} onClick={() => startSession(selectedAdHoc)}>
-            <Play size={15}/>{pending ? 'Starting…' : `Start ${selectedAdHoc.batch ? `(${selectedAdHoc.batch})` : 'session'}`}
-          </button>
+
+        {/* Selected Class Details Card */}
+        {selectedClass && (
+          <div className="selected-class-card">
+            <div className="class-badge-and-name">
+              <span className={`class-type-tag ${selectedClass.is_lab ? 'lab-tag' : 'lecture-tag'}`}>
+                {selectedClass.is_lab ? 'LAB' : 'LECTURE'}
+              </span>
+              <strong className="class-title-text">{selectedClass.course_name}</strong>
+              {selectedClass.course_code && <span className="code-pill">{selectedClass.course_code}</span>}
+              {selectedClass.batch ? (
+                <span className="batch-pill-highlight">Batch {selectedClass.batch}</span>
+              ) : (
+                <span className="batch-pill-all">Whole Section D</span>
+              )}
+              {currentClasses.some(curr => curr.id === selectedClass.id) && (
+                <span className="now-badge">● IN SESSION NOW</span>
+              )}
+            </div>
+            <div className="class-meta-details">
+              <span><b>Time:</b> {selectedClass.start_time}–{selectedClass.end_time}</span>
+              <span><b>Teacher:</b> {selectedClass.teacher || 'TBD'}</span>
+              <span><b>Room:</b> {selectedClass.room || 'Room TBD'}</span>
+              <span><b>Eligible Students:</b> {batchStudents.length} {selectedClass.batch ? `(Batch ${selectedClass.batch} only)` : '(All Section D)'}</span>
+            </div>
+          </div>
         )}
-      </>}
-    </div>
+      </div>
+    )}
 
     {/* Deep Learning Metrics Cards */}
     <div className="metrics metrics-4">
@@ -388,11 +492,29 @@ function Live({state,refresh,action}) {
           </div>
         )}
 
-        {result?.name && <div className="match-result">
+        {result?.wrong_batch && (
+          <div className="unknown-result" style={{borderColor:'#e53e3e',background:'#fff5f5',marginTop:14}}>
+            <AlertTriangle size={18} color="#e53e3e"/>
+            <div>
+              <b style={{color:'#c53030'}}>Wrong Batch — Attendance Not Marked</b>
+              <small style={{color:'#9b2c2c',display:'block',marginTop:3}}>
+                {result.batch_error || `${result.name} (${result.roll_no}) belongs to Batch ${result.student_batch}, but this session is for Batch ${result.target_batch}.`}
+              </small>
+            </div>
+          </div>
+        )}
+
+        {result?.name && !result.wrong_batch && <div className="match-result">
           <UserCheck size={18}/>
           <div>
-            <b>{result.name}</b> <small className="muted">({result.roll_no})</small>
-            <small>{result.stable ? (session ? 'Verified match · attendance recorded' : 'Verified match · start session to record') : 'Confirming identity in temporal queue…'}</small>
+            <b>{result.name}</b> <small className="muted">({result.roll_no}{result.student_batch ? ` · Batch ${result.student_batch}` : ''})</small>
+            <small style={{display:'block',marginTop:2}}>
+              {result.stable
+                ? (session
+                    ? (result.marked ? '✅ Verified match · Marked Present!' : 'Verified match · Already recorded present')
+                    : 'Verified match · Start session to record')
+                : 'Confirming identity in temporal queue…'}
+            </small>
           </div>
         </div>}
         {result?.identity === null && result?.reason === 'Unknown' && result?.quality &&

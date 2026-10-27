@@ -148,3 +148,17 @@ def test_csv_formula_escape(client, monkeypatch):
     main.store.mark(pid, sid, .9)
     csv = client.get('/api/attendance.csv').text
     assert "'=FORMULA" in csv and "'+123" in csv and "'@SESSION" in csv
+
+
+def test_cross_batch_attendance_rejected(client, monkeypatch):
+    """Students from batch D3 must not be marked present in a batch D1 session."""
+    s1 = main.store.add_student('D-1', 'Student D1', batch='D1')
+    s3 = main.store.add_student('D-52', 'Student D3', batch='D3')
+    rid = main.store.add_timetable_rule(1, '15:00', '17:00', 'Cloud Lab', batch='D1')
+    sess_id = main.store.start_session('Cloud Lab (D1)', rule_id=rid)
+
+    # Student from batch D3 must be rejected
+    assert main.store.mark(s3, sess_id, 0.9) is False
+    # Student from batch D1 must be accepted
+    assert main.store.mark(s1, sess_id, 0.9) is True
+

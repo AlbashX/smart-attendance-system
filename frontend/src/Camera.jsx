@@ -160,7 +160,7 @@ export default function Camera({ onFrame, automatic = false, enabled = true, res
         <div className="frame-corners" aria-hidden="true"><i /><i /><i /><i /></div>
         {active && result?.box && (
           <div
-            className={`face-box ${result.identity ? 'matched' : ''}`}
+            className={`face-box ${result.wrong_batch ? 'wrong-batch' : (result.identity ? 'matched' : '')}`}
             style={{
               left: `${(result.box[0] / result.width) * 100}%`,
               top: `${(result.box[1] / result.height) * 100}%`,
@@ -168,7 +168,11 @@ export default function Camera({ onFrame, automatic = false, enabled = true, res
               height: `${(result.box[3] / result.height) * 100}%`,
             }}
           >
-            <span>{result.name || (result.quality ? 'Face detected' : 'Adjust position')}</span>
+            <span>
+              {result.wrong_batch
+                ? `⚠️ Wrong Batch (${result.student_batch || 'Other'})`
+                : (result.name || (result.quality ? 'Face detected' : 'Adjust position'))}
+            </span>
           </div>
         )}
         {active && (

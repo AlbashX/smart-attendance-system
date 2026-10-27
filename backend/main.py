@@ -8,7 +8,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from pathlib import Path
 from typing import Literal
 import numpy as np
@@ -22,6 +22,15 @@ from .vision import FaceEngine
 from .seed import auto_seed
 
 log = logging.getLogger(__name__)
+
+# Indian Standard Time (IST = UTC+5:30) for RBU Nagpur timetable alignment
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def get_now() -> datetime:
+    """Return current datetime in Indian Standard Time (IST)."""
+    return datetime.now(IST)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 store = Store(os.environ.get('ATTEND_DB', str(ROOT / 'data/attendance.db')))
@@ -178,7 +187,7 @@ def settings():
 
 def get_current_classes():
     """Determine all classes currently in session based on the timetable."""
-    today = datetime.now()
+    today = get_now()
     weekday = today.weekday()  # 0=Mon..6=Sun
     if weekday > 5:
         return []
@@ -197,7 +206,7 @@ def get_current_session_info():
 
 def get_next_class():
     """Find the next upcoming class today."""
-    today = datetime.now()
+    today = get_now()
     weekday = today.weekday()
     if weekday > 5:
         return None
@@ -325,6 +334,8 @@ def state():
     else:
         current_class = current_classes[0] if current_classes else None
     next_class = get_next_class() if not current_classes else None
+    now_dt = get_now()
+    now_weekday = now_dt.weekday()
     return dict(
         students=store.students(),
         sessions=store.sessions(),
@@ -338,10 +349,10 @@ def state():
         current_classes=current_classes,
         next_class=next_class,
         dl_metrics=compute_dl_metrics(),
-        today=datetime.now().strftime('%Y-%m-%d'),
-        weekday=datetime.now().weekday(),
-        day_name=DAY_NAMES[datetime.now().weekday()]
-        if datetime.now().weekday() < 6 else 'Sunday'
+        today=now_dt.strftime('%Y-%m-%d'),
+        weekday=now_weekday,
+        day_name=DAY_NAMES[now_weekday] if now_weekday < 6 else 'Sunday',
+        current_time=now_dt.strftime('%H:%M'),
     )
 
 
@@ -607,21 +618,64 @@ def recognize(body: Frame):
         stab_obj = stability.setdefault(key, Stability())
         stable = stab_obj.observe(decision['identity'], time.monotonic())
         stable_count = getattr(stab_obj, 'count', 0)
+
+        # Batch verification: ensure student belongs to the active session's batch
+        student_obj = None
+        if decision['identity']:
+            student_obj = next((s for s in students if s['id'] == decision['identity']), None)
+
+        target_batch = None
+        if body.session_id:
+            with store.connect() as db:
+                s_row = db.execute('SELECT rule_id, name FROM sessions WHERE id=?',
+                                   (body.session_id,)).fetchone()
+            if s_row:
+                if s_row['rule_id']:
+                    r_rule = next((r for r in store.timetable_rules()
+                                   if r['id'] == s_row['rule_id']), None)
+                    if r_rule and r_rule.get('batch'):
+                        target_batch = r_rule['batch']
+                if not target_batch and s_row['name']:
+                    for b in ('D1', 'D2', 'D3'):
+                        if f'({b})' in s_row['name'] or f'Batch {b}' in s_row['name']:
+                            target_batch = b
+                            break
+
+        wrong_batch = False
+        batch_error = None
+        if student_obj and target_batch and student_obj.get('batch'):
+            if student_obj['batch'] != target_batch:
+                wrong_batch = True
+                batch_error = (
+                    f"Student {student_obj['name']} ({student_obj['roll_no']}) "
+                    f"belongs to Batch {student_obj['batch']}, but this session "
+                    f"is for Batch {target_batch}."
+                )
+
         marked = False
-        if stable and body.session_id:
+        if stable and body.session_id and not wrong_batch:
             marked = store.mark(
                 decision['identity'], body.session_id, decision['score'])
-        name = next((s['name'] for s in students
-                     if s['id'] == decision['identity']), None)
-        roll = next((s['roll_no'] for s in students
-                     if s['id'] == decision['identity']), None)
-        return {**result, **decision,
-                'stable': stable, 'marked': marked,
-                'name': name, 'roll_no': roll,
-                'stable_count': min(stable_count, 3),
-                'threshold': config['threshold'],
-                'margin': config['margin'],
-                'embedding_dim': 128 if embedding is not None else None}
+
+        name = student_obj['name'] if student_obj else None
+        roll = student_obj['roll_no'] if student_obj else None
+        student_batch = student_obj.get('batch') if student_obj else None
+
+        return {
+            **result, **decision,
+            'stable': stable,
+            'marked': marked,
+            'wrong_batch': wrong_batch,
+            'batch_error': batch_error,
+            'student_batch': student_batch,
+            'target_batch': target_batch,
+            'name': name,
+            'roll_no': roll,
+            'stable_count': min(stable_count, 3),
+            'threshold': config['threshold'],
+            'margin': config['margin'],
+            'embedding_dim': 128 if embedding is not None else None
+        }
 
 
 # ── Timetable endpoints ──────────────────────────────────────
@@ -633,7 +687,7 @@ def get_timetable():
 
 @app.get('/api/timetable/today')
 def timetable_today():
-    today = datetime.now()
+    today = get_now()
     weekday = today.weekday()
     if weekday > 5:
         return {'schedule': [], 'day': 'Sunday', 'date': today.strftime('%Y-%m-%d')}
