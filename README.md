@@ -93,6 +93,8 @@ For development run the Python API on port 8000 and Vite on port 5173. Use the p
 - No login or multi-user administration. Same-origin and host restrictions reduce accidental exposure but are not authentication. Use only on a trusted local computer.
 - Camera permissions and real volunteer end-to-end accuracy need to be verified on the target laptop. Automated synthetic tests do not establish biometric accuracy.
 
+- Live Demo- https://smart-attendance-system-kk8h.onrender.com/
+
 ## Sources
 
 - [OpenCV YuNet/SFace tutorial](https://docs.opencv.org/4.x/d0/dd4/tutorial_dnn_face.html)
